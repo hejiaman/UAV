@@ -1,9 +1,8 @@
-from config import CONFIG
 from environment.iiot_env import IIoTEnvironment
 from agent.rl_agent import RLAgent
 
 def main():
-    env = IIoTEnvironment(CONFIG)
+    env = IIoTEnvironment()
     agent = RLAgent(env.action_space, env.observation_space, CONFIG)
     # Training loop logic here
     for episode in range(CONFIG['num_episodes']):

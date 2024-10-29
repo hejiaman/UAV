@@ -1,4 +1,4 @@
-class DataPackage:
+class Package:
     def __init__(self, id, process_required, data_type, data_size):
         self.id = id
         self.process_required = process_required
