@@ -6,7 +6,7 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-import rl_utils
+import utils.rl_utils
 
 
 class Qnet(torch.nn.Module):

@@ -1,0 +1,165 @@
+import gym
+import numpy as np
+from domain.user import User
+from domain.drone import Drone
+from domain.Kmeans import DroneCluster
+from utils.metrics import MetricsCalculator
+
+
+class DroneSchedulingEnv(gym.Env):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.current_step = 0
+        self._init_environment()
+
+
+        # 动作空间：每个无人机对当前任务的选择
+        # 0:本地执行, 1~N:转发给对应无人机
+        self.action_space = gym.spaces.MultiDiscrete(
+        [self.config['num_drones'] + 1] * self.config['num_drones'])
+
+        '''
+        -----可以改进（改编成连续动作空间，比如转发概率？）)
+        self.action_space = gym.spaces.Box(low=0, high=1, shape=(num_drones,))
+        让每个无人机的动作值表示：
+        0~0.5：本地执行
+        0.5~1.0：转发，具体目标无人机用 softmax 选择
+        '''
+
+        # 状态空间：[队列长度, CPU利用率, 剩余时延] × num_drones
+        self.observation_space = gym.spaces.Box(
+            low=0, high=np.inf,
+            shape=(self.config['num_drones'] * 3,),
+            dtype=np.float32)
+
+        # 优化方向：队列长度queue_length / max_queue_length和时延remaining_delay / max_delay可以做一个归一化
+
+
+
+    def _init_environment(self):
+        """初始化用户和无人机"""
+        self.users = [User(i, pos, self.config['task_rate'])
+                      for i, pos in enumerate(self.config['user_positions'])]
+
+        # 聚类部署无人机
+        cluster = DroneCluster(self.config['coverage_radius'])
+        drone_positions, assignments = cluster.deploy_drones(
+            self.config['user_positions'],
+            self.config['num_drones'])
+
+        # 绑定用户到无人机
+        for user_id, drone_id in assignments.items():
+            if drone_id is not None:
+                self.users[user_id].assigned_drone = drone_id
+
+        # 初始化无人机
+        self.drones = [Drone(i, pos, self.config)
+                       for i, pos in enumerate(drone_positions)]
+        self.completed_tasks = []
+
+    def step(self, actions):
+        """执行一个时间步"""
+        self.current_step += 1
+
+        # 1. 处理当前任务
+        for drone in self.drones:
+            if drone.process_task():  # 任务完成
+                self.completed_tasks.append(drone.current_task)
+                drone.current_task = None
+
+        # 2. 执行调度决策
+        self._execute_actions(actions)
+
+        # 3. 生成新任务
+        self._generate_tasks()
+
+        # 获取状态和奖励
+        next_state = self._get_state()
+        reward = MetricsCalculator.calculate_reward(self)
+        done = self.current_step >= self.config['max_steps']
+
+        return next_state, reward, done, self._get_metrics()
+
+    def _execute_actions(self, actions):
+        """处理调度动作"""
+        for drone_id, action in enumerate(actions):
+            drone = self.drones[drone_id]
+
+            # 只对新到达的pending任务做决策
+            if drone.current_task and drone.current_task['status'] == 'pending':
+                if action == 0:  # 本地执行
+                    drone.current_task['status'] = 'computing'
+                else:  # 转发
+                    target_id = action - 1
+                    if target_id < len(self.drones):
+                        self._forward_task(drone, self.drones[target_id])
+
+    def _forward_task(self, src_drone, dst_drone):
+        """转发任务到目标无人机"""
+        task = src_drone.current_task
+        distance = np.linalg.norm(src_drone.position - dst_drone.position)
+
+        # 计算传输时延和能耗
+        transfer_time = task['data_size'] / min(src_drone.bandwidth, dst_drone.bandwidth)
+        transfer_energy = src_drone.transmit_power * transfer_time
+
+        # 更新任务状态
+        task.update({
+            'status': 'transferring',
+            'transfer_from': src_drone.id,
+            'transfer_to': dst_drone.id,
+            'transfer_time': transfer_time,
+            'transfer_energy': transfer_energy
+        })
+
+        # 转移任务到目标无人机
+        src_drone.current_task = None
+        dst_drone.task_queue.append(task)
+        src_drone.energy_consumed += transfer_energy
+
+    def _generate_tasks(self):
+        """用户生成新任务"""
+        for user in self.users:
+            task = user.generate_task(self.current_step)
+            if task and user.assigned_drone is not None:
+                self.drones[user.assigned_drone].task_queue.append(task)
+
+    def _get_state(self):
+        """获取环境状态"""
+        state = []
+        for drone in self.drones:
+            # 队列长度（归一化）
+            queue_len = len(drone.task_queue) / self.config['max_queue_length']
+
+            # CPU利用率（当前任务进度）
+            progress = 0
+            if drone.current_task and drone.current_task['status'] == 'computing':
+                progress = drone.current_task['compute_req'] / drone.current_task['initial_compute']
+
+            # 最紧急任务的剩余时延
+            urgency = 0
+            if drone.task_queue:
+                nearest_deadline = min(
+                    (t['deadline'] - self.current_step) / self.config['max_deadline']
+                    for t in drone.task_queue)
+                urgency = max(0, nearest_deadline)
+
+            state.extend([queue_len, progress, urgency])
+        return np.array(state)
+
+    def _get_metrics(self):
+        """获取评估指标"""
+        return {
+            'completed': len(self.completed_tasks),
+            'avg_delay': MetricsCalculator.average_delay(self.completed_tasks),
+            'total_energy': sum(d.energy_consumed for d in self.drones),
+            'load_balance': MetricsCalculator.load_balance(self.drones)
+        }
+
+    def reset(self):
+        """重置环境"""
+        self.current_step = 0
+        self.completed_tasks = []
+        self._init_environment()
+        return self._get_state()

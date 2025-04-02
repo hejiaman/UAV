@@ -1,17 +1,37 @@
-from environment.iiot_env import IIoTEnvironment
-from agent.rl_agent import RLAgent
+from enviroment.drone_env import DroneSchedulingEnv
+from utils.config import load_config, DEFAULT_CONFIG
+from stable_baselines3 import PPO
+import os
 
-def main():
-    env = IIoTEnvironment()
-    agent = RLAgent(env.action_space, env.observation_space, CONFIG)
-    # Training loop logic here
-    for episode in range(CONFIG['num_episodes']):
-        state = env.reset()
-        done = False
-        while not done:
-            action = agent.choose_action(state)
-            next_state, reward, done, _ = env.step(action)
-            agent.learn(state, action, reward, next_state, done)
-            state = next_state
+
+def train():
+    # 加载配置（可替换为从文件读取）
+    config = DEFAULT_CONFIG.copy()
+    config.update({
+        'user_positions': [[i * 10, i * 20] for i in range(10)],  # 10个用户
+        'num_drones': 4
+    })
+
+    # 创建环境
+    env = DroneSchedulingEnv(config)
+
+    # 训练PPO模型
+    model = PPO(
+        "MlpPolicy",
+        env,
+        verbose=1,
+        tensorboard_log="./logs/drone_scheduling/",
+        learning_rate=3e-4,
+        gamma=0.99,
+        batch_size=64
+    )
+    model.learn(total_timesteps=100000)
+
+    # 保存模型
+    os.makedirs("./models", exist_ok=True)
+    model.save("./models/drone_scheduler_ppo")
+    print("Training completed and model saved")
+
+
 if __name__ == "__main__":
-    main()
+    train()
