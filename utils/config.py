@@ -17,5 +17,7 @@ DEFAULT_CONFIG = {
     'task_rate': 0.1,
     'max_steps': 100,
     'reward_weights': [0.4, 0.4, 0.2],  # 时延,能耗,负载
-    'task_complete_bonus': 5
+    'task_complete_bonus': 5,
+    'compute_energy_coeff': 0.5,  # 必须添加
+    'transmit_energy_coeff': 0.1  # 必须添加
 }

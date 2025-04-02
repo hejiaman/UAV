@@ -3,6 +3,7 @@ import numpy as np
 from domain.user import User
 from domain.drone import Drone
 from domain.Kmeans import DroneCluster
+from domain.Louvain import DroneCluster
 from utils.metrics import MetricsCalculator
 
 
@@ -36,27 +37,55 @@ class DroneSchedulingEnv(gym.Env):
         # 优化方向：队列长度queue_length / max_queue_length和时延remaining_delay / max_delay可以做一个归一化
 
 
-
     def _init_environment(self):
         """初始化用户和无人机"""
         self.users = [User(i, pos, self.config['task_rate'])
                       for i, pos in enumerate(self.config['user_positions'])]
 
-        # 聚类部署无人机
-        cluster = DroneCluster(self.config['coverage_radius'])
-        drone_positions, assignments = cluster.deploy_drones(
-            self.config['user_positions'],
-            self.config['num_drones'])
+        # 获取用户数据
+        user_positions = [user.position for user in self.users]
+        user_loads = [user.task_rate for user in self.users]
+
+        # 使用优化部署
+        deployer = DroneCluster(
+            coverage_radius=self.config['coverage_radius'],
+            max_drones=self.config['num_drones'],
+            beta=self.config.get('beta', 1.0)
+        )
+
+        drone_positions, assignments = deployer.deploy_drones(
+            user_positions=user_positions,
+            user_loads=user_loads
+        )
+
+        # 初始化无人机
+        self.drones = [
+            Drone(i, pos, self.config)
+            for i, pos in enumerate(drone_positions)
+        ]
 
         # 绑定用户到无人机
         for user_id, drone_id in assignments.items():
-            if drone_id is not None:
-                self.users[user_id].assigned_drone = drone_id
+            self.users[user_id].assigned_drone = drone_id
+            self.drones[drone_id].current_load += self.users[user_id].task_rate
 
-        # 初始化无人机
-        self.drones = [Drone(i, pos, self.config)
-                       for i, pos in enumerate(drone_positions)]
         self.completed_tasks = []
+
+        # # 聚类部署无人机
+        # cluster = DroneCluster(self.config['coverage_radius'])
+        # drone_positions, assignments = cluster.deploy_drones(
+        #     self.config['user_positions'],
+        #     self.config['num_drones'])
+        #
+        # # 绑定用户到无人机
+        # for user_id, drone_id in assignments.items():
+        #     if drone_id is not None:
+        #         self.users[user_id].assigned_drone = drone_id
+        #
+        # # 初始化无人机
+        # self.drones = [Drone(i, pos, self.config)
+        #                for i, pos in enumerate(drone_positions)]
+        # self.completed_tasks = []
 
     def step(self, actions):
         """执行一个时间步"""
@@ -95,28 +124,14 @@ class DroneSchedulingEnv(gym.Env):
                     if target_id < len(self.drones):
                         self._forward_task(drone, self.drones[target_id])
 
-    def _forward_task(self, src_drone, dst_drone):
-        """转发任务到目标无人机"""
-        task = src_drone.current_task
-        distance = np.linalg.norm(src_drone.position - dst_drone.position)
-
-        # 计算传输时延和能耗
-        transfer_time = task['data_size'] / min(src_drone.bandwidth, dst_drone.bandwidth)
-        transfer_energy = src_drone.transmit_power * transfer_time
-
-        # 更新任务状态
-        task.update({
-            'status': 'transferring',
-            'transfer_from': src_drone.id,
-            'transfer_to': dst_drone.id,
-            'transfer_time': transfer_time,
-            'transfer_energy': transfer_energy
-        })
-
-        # 转移任务到目标无人机
-        src_drone.current_task = None
-        dst_drone.task_queue.append(task)
-        src_drone.energy_consumed += transfer_energy
+    def _generate_tasks(self):
+        """用户生成新任务（需要设置初始状态）"""
+        for user in self.users:
+            if user.assigned_drone is not None:
+                task = user.generate_task(self.current_step)
+                if task:
+                    task['status'] = 'pending'  # 新增：明确设置初始状态
+                    self.drones[user.assigned_drone].add_task(task)
 
     def _generate_tasks(self):
         """用户生成新任务"""
