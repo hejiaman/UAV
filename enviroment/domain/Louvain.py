@@ -1,6 +1,7 @@
 import community as community_louvain
 import networkx as nx
 import numpy as np
+from collections import defaultdict
 
 
 class DroneCluster:

@@ -58,12 +58,20 @@ class PPO:
         self.eps = eps  # PPO中截断范围的参数
         self.device = device
 
+    # def take_action(self, state):
+    #     state = torch.tensor([state], dtype=torch.float).to(self.device)
+    #     probs = self.actor(state)
+    #     action_dist = torch.distributions.Categorical(probs)
+    #     action = action_dist.sample()
+    #     return action.item()
+
+    # 根据UAV环境修改take_action方法
     def take_action(self, state):
-        state = torch.tensor([state], dtype=torch.float).to(self.device)
+        state = torch.tensor(state, dtype=torch.float).to(self.device)
         probs = self.actor(state)
         action_dist = torch.distributions.Categorical(probs)
-        action = action_dist.sample()
-        return action.item()
+        actions = [action_dist.sample().item() for _ in range(env.config['num_drones'])]
+        return np.array(actions)  # 返回每个无人机的动作
 
     def update(self, transition_dict):
         states = torch.tensor(transition_dict['states'],

@@ -140,28 +140,38 @@ class DroneSchedulingEnv(gym.Env):
             if task and user.assigned_drone is not None:
                 self.drones[user.assigned_drone].task_queue.append(task)
 
+    # def _get_state(self):
+    #     """获取环境状态"""
+    #     state = []
+    #     for drone in self.drones:
+    #         # 队列长度（归一化）
+    #         queue_len = len(drone.task_queue) / self.config['max_queue_length']
+    #
+    #         # CPU利用率（当前任务进度）
+    #         progress = 0
+    #         if drone.current_task and drone.current_task['status'] == 'computing':
+    #             progress = drone.current_task['compute_req'] / drone.current_task['initial_compute']
+    #
+    #         # 最紧急任务的剩余时延
+    #         urgency = 0
+    #         if drone.task_queue:
+    #             nearest_deadline = min(
+    #                 (t['deadline'] - self.current_step) / self.config['max_deadline']
+    #                 for t in drone.task_queue)
+    #             urgency = max(0, nearest_deadline)
+    #
+    #         state.extend([queue_len, progress, urgency])
+    #     return np.array(state)
+
+    # PPO:修改get_state()返回归一化状态
     def _get_state(self):
-        """获取环境状态"""
         state = []
         for drone in self.drones:
-            # 队列长度（归一化）
-            queue_len = len(drone.task_queue) / self.config['max_queue_length']
-
-            # CPU利用率（当前任务进度）
-            progress = 0
-            if drone.current_task and drone.current_task['status'] == 'computing':
-                progress = drone.current_task['compute_req'] / drone.current_task['initial_compute']
-
-            # 最紧急任务的剩余时延
-            urgency = 0
-            if drone.task_queue:
-                nearest_deadline = min(
-                    (t['deadline'] - self.current_step) / self.config['max_deadline']
-                    for t in drone.task_queue)
-                urgency = max(0, nearest_deadline)
-
-            state.extend([queue_len, progress, urgency])
-        return np.array(state)
+            queue_ratio = len(drone.task_queue) / self.config['max_queue_length']
+            cpu_util = drone.current_task['compute_req'] / drone.current_task[
+                'initial_compute'] if drone.current_task else 0
+            state.extend([queue_ratio, cpu_util])
+        return np.array(state, dtype=np.float32)
 
     def _get_metrics(self):
         """获取评估指标"""
