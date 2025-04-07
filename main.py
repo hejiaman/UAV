@@ -1,4 +1,4 @@
-from enviroment.drone_env import DroneSchedulingEnv
+from enviroment.uav_env import DroneSchedulingEnv
 from utils.config import load_config, DEFAULT_CONFIG
 from stable_baselines3 import PPO
 import os

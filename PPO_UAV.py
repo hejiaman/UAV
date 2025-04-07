@@ -5,21 +5,8 @@ from tqdm import tqdm
 import torch
 import matplotlib.pyplot as plt
 from agent.PPO_d import PPO
-from enviroment.drone_env import DroneSchedulingEnv
+from enviroment.uav_env import DroneSchedulingEnv
 
-# 环境配置
-# config = {
-#     'num_drones': 3,
-#     'coverage_radius': 500,
-#     'compute_power': 100,
-#     'bandwidth': 10,
-#     'max_queue_length': 5,
-#     'task_rate': [0.3, 0.5, 0.4],
-#     'user_positions': [(0, 0), (100, 100), (200, 50)],
-#     'max_steps': 200,
-#     'compute_energy_coeff': 0.5,
-#     'transmit_energy_coeff': 0.1
-# }
 
 config = {
     'num_drones': 3,
@@ -52,15 +39,23 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 初始化环境和PPO
 env = DroneSchedulingEnv(config)
-state_dim = env.observation_space.shape[0]
-action_dim = env.action_space.nvec[0]  # 假设使用MultiDiscrete
+initial_state = env.reset()
 
-agent = PPO(state_dim, hidden_dim, action_dim, actor_lr, critic_lr,
-            lmbda, epochs, eps, gamma, device)
+state_dim = len(initial_state)  # 动态获取实际维度
 
-# state = env.reset()
-# print("State shape:", state.shape)  # 应该是 (n,)
-# print("State:", state)  # 查看具体值
+agent = PPO(
+    state_dim=state_dim,
+    hidden_dim=hidden_dim,
+    action_dim=env.action_space.shape[0],
+    actor_lr=actor_lr,
+    critic_lr=critic_lr,
+    lmbda=lmbda,
+    epochs=epochs,
+    eps=eps,
+    gamma=gamma,
+    device=device
+)
+
 
 # 训练循环
 return_list = []
@@ -77,8 +72,8 @@ for i in range(10):  # 10个训练阶段
             done = False
 
             while not done:
-                current_state = env._get_state() if hasattr(env, '_get_state') else env.state
-                action = agent.take_action(current_state)
+                state = env._get_state() if hasattr(env, '_get_state') else env.state
+                action = agent.take_action(state, env)
                 next_state, reward, done, _ = env.step(action)
 
                 transition_dict['states'].append(state)

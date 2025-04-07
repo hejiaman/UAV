@@ -24,10 +24,22 @@ class PolicyNet(torch.nn.Module):
         super(PolicyNet, self).__init__()
         self.fc1 = torch.nn.Linear(state_dim, hidden_dim)
         self.fc2 = torch.nn.Linear(hidden_dim, action_dim)
+        # 初始化验证
+        self._validate_network(state_dim)
+
+    def _validate_network(self, state_dim):
+        """验证网络维度一致性"""
+        test_input = torch.randn(1, state_dim)
+        try:
+            output = self.forward(test_input)
+            assert output.shape[1] == self.fc2.out_features
+        except Exception as e:
+            raise RuntimeError(f"网络验证失败: {str(e)}")
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        return F.softmax(self.fc2(x), dim=1)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)  # (n,) -> (1,n)
+        return F.softmax(self.fc2(F.relu(self.fc1(x))), dim=1)
 
 
 class ValueNet(torch.nn.Module):
@@ -66,18 +78,23 @@ class PPO:
     #     return action.item()
 
     # 根据UAV环境修改take_action方法
-    def take_action(self, state):
+    def take_action(self, state, env):
         state = torch.tensor(state, dtype=torch.float).to(self.device)
         probs = self.actor(state)
         action_dist = torch.distributions.Categorical(probs)
+
+        # 使用 env.config['num_drones'] 获取无人机数量
         actions = [action_dist.sample().item() for _ in range(env.config['num_drones'])]
+
         return np.array(actions)  # 返回每个无人机的动作
+
 
     def update(self, transition_dict):
         states = torch.tensor(transition_dict['states'],
                               dtype=torch.float).to(self.device)
-        actions = torch.tensor(transition_dict['actions']).view(-1, 1).to(
-            self.device)
+        # actions = torch.tensor(transition_dict['actions']).view(-1, 1).to(
+        #     self.device)
+        actions = torch.tensor(transition_dict['actions'], dtype=torch.long)
         rewards = torch.tensor(transition_dict['rewards'],
                                dtype=torch.float).view(-1, 1).to(self.device)
         next_states = torch.tensor(transition_dict['next_states'],

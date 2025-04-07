@@ -1,9 +1,9 @@
 import gym
 import numpy as np
 from enviroment.domain.user import User
-from enviroment.domain.drone import Drone
+from enviroment.domain.uav import Drone
 from enviroment.domain.Kmeans import DroneCluster
-from enviroment.domain.Louvain import DroneCluster
+# from enviroment.domain.Louvain import DroneCluster
 from utils.metrics import MetricsCalculator
 
 
@@ -47,23 +47,24 @@ class DroneSchedulingEnv(gym.Env):
         user_loads = [user.task_rate for user in self.users]
 
         # 使用优化部署
+        # 使用 KMeans 聚类部署
         deployer = DroneCluster(
-            coverage_radius=self.config['coverage_radius'],
-            max_drones=self.config['num_drones'],
-            beta=self.config.get('beta', 1.0)
+            coverage_radius=self.config['coverage_radius']
         )
 
         drone_positions, assignments = deployer.deploy_drones(
             user_positions=user_positions,
-            user_loads=user_loads
+            num_drones=self.config['num_drones']
         )
+
+        # print(f"Number of drone positions: {len(drone_positions)}")
+        # print(f"Number of assignments: {len(assignments)}")
 
         # 初始化无人机
         self.drones = [
             Drone(i, pos, self.config)
             for i, pos in enumerate(drone_positions)
         ]
-
 
         # 部署无人机后添加负载初始化
         for drone in self.drones:
@@ -78,21 +79,6 @@ class DroneSchedulingEnv(gym.Env):
 
         self.completed_tasks = []
 
-        # # 聚类部署无人机
-        # cluster = DroneCluster(self.config['coverage_radius'])
-        # drone_positions, assignments = cluster.deploy_drones(
-        #     self.config['user_positions'],
-        #     self.config['num_drones'])
-        #
-        # # 绑定用户到无人机
-        # for user_id, drone_id in assignments.items():
-        #     if drone_id is not None:
-        #         self.users[user_id].assigned_drone = drone_id
-        #
-        # # 初始化无人机
-        # self.drones = [Drone(i, pos, self.config)
-        #                for i, pos in enumerate(drone_positions)]
-        # self.completed_tasks = []
 
     def step(self, actions):
         """执行一个时间步"""
@@ -111,8 +97,9 @@ class DroneSchedulingEnv(gym.Env):
         self._generate_tasks()
 
         # 获取状态和奖励
-        next_state = self._get_state
+        next_state = self._get_state()
         reward = MetricsCalculator.calculate_reward(self)
+        print("reward:", reward)
         done = self.current_step >= self.config['max_steps']
 
         return next_state, reward, done, self._get_metrics()
@@ -120,6 +107,9 @@ class DroneSchedulingEnv(gym.Env):
     def _execute_actions(self, actions):
         """处理调度动作"""
         for drone_id, action in enumerate(actions):
+            if drone_id >= len(self.drones):
+                print(f"Error: Drone ID {drone_id} is out of range. Total drones: {len(self.drones)}")
+                continue  # 跳过错误的动作
             drone = self.drones[drone_id]
 
             # 只对新到达的pending任务做决策
@@ -132,53 +122,13 @@ class DroneSchedulingEnv(gym.Env):
                         self._forward_task(drone, self.drones[target_id])
 
     def _generate_tasks(self):
-        """用户生成新任务（需要设置初始状态）"""
-        for user in self.users:
-            if user.assigned_drone is not None:
-                task = user.generate_task(self.current_step)
-                if task:
-                    task['status'] = 'pending'  # 新增：明确设置初始状态
-                    self.drones[user.assigned_drone].add_task(task)
-
-    def _generate_tasks(self):
         """用户生成新任务"""
         for user in self.users:
             task = user.generate_task(self.current_step)
             if task and user.assigned_drone is not None:
                 self.drones[user.assigned_drone].task_queue.append(task)
 
-    # def _get_state(self):
-    #     """获取环境状态"""
-    #     state = []
-    #     for drone in self.drones:
-    #         # 队列长度（归一化）
-    #         queue_len = len(drone.task_queue) / self.config['max_queue_length']
-    #
-    #         # CPU利用率（当前任务进度）
-    #         progress = 0
-    #         if drone.current_task and drone.current_task['status'] == 'computing':
-    #             progress = drone.current_task['compute_req'] / drone.current_task['initial_compute']
-    #
-    #         # 最紧急任务的剩余时延
-    #         urgency = 0
-    #         if drone.task_queue:
-    #             nearest_deadline = min(
-    #                 (t['deadline'] - self.current_step) / self.config['max_deadline']
-    #                 for t in drone.task_queue)
-    #             urgency = max(0, nearest_deadline)
-    #
-    #         state.extend([queue_len, progress, urgency])
-    #     return np.array(state)
 
-    # # PPO:修改get_state()返回归一化状态
-    # def _get_state(self):
-    #     state = []
-    #     for drone in self.drones:
-    #         queue_ratio = len(drone.task_queue) / self.config['max_queue_length']
-    #         cpu_util = drone.current_task['compute_req'] / drone.current_task[
-    #             'initial_compute'] if drone.current_task else 0
-    #         state.extend([queue_ratio, cpu_util])
-    #     return np.array(state, dtype=np.float32)
     def _get_state(self):
         state = []
         # 每个无人机固定贡献3个特征
@@ -193,9 +143,9 @@ class DroneSchedulingEnv(gym.Env):
             len(self.completed_tasks) / 100,
             self.current_step / self.config['max_steps']
         ])
-        state = np.array(state, dtype=np.float32)
-        print(f"状态向量生成: 无人机数={len(self.drones)}, 总维度={len(state)}")  # 调试
-        return state
+        expected_dim = 3 * len(self.drones) + 2
+        assert len(state) == expected_dim, f"状态维度应为{expected_dim}，实际{len(state)}"
+        return np.array(state, dtype=np.float32)
 
 
     def _get_metrics(self):
@@ -212,4 +162,4 @@ class DroneSchedulingEnv(gym.Env):
         self.current_step = 0
         self.completed_tasks = []
         self._init_environment()
-        return self._get_state
+        return self._get_state()

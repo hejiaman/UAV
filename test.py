@@ -1,7 +1,7 @@
 import torch
 
 from agent.PPO_d import PolicyNet
-from enviroment.drone_env import DroneSchedulingEnv
+from enviroment.uav_env import DroneSchedulingEnv
 
 config = {
     'num_drones': 3,
