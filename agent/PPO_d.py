@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-import rl_utils
+from utils import rl_utils
 
 actor_lr = 1e-3
 critic_lr = 1e-2

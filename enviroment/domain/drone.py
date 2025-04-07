@@ -20,6 +20,7 @@ class Drone:
         self.task_queue = []
         self.current_task = None
         self.energy_consumed = 0  # 累计能耗
+        self.current_load = 0  # 新增负载属性
 
     def add_task(self, task):
         """添加任务到队列"""

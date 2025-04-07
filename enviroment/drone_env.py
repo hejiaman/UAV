@@ -1,9 +1,9 @@
 import gym
 import numpy as np
-from domain.user import User
-from domain.drone import Drone
-from domain.Kmeans import DroneCluster
-from domain.Louvain import DroneCluster
+from enviroment.domain.user import User
+from enviroment.domain.drone import Drone
+from enviroment.domain.Kmeans import DroneCluster
+from enviroment.domain.Louvain import DroneCluster
 from utils.metrics import MetricsCalculator
 
 
@@ -21,7 +21,7 @@ class DroneSchedulingEnv(gym.Env):
         [self.config['num_drones'] + 1] * self.config['num_drones'])
 
         '''
-        -----可以改进（改编成连续动作空间，比如转发概率？）)
+        -----可以改进（改编成连续动作空间，比如转发概率）)
         self.action_space = gym.spaces.Box(low=0, high=1, shape=(num_drones,))
         让每个无人机的动作值表示：
         0~0.5：本地执行
@@ -64,10 +64,17 @@ class DroneSchedulingEnv(gym.Env):
             for i, pos in enumerate(drone_positions)
         ]
 
-        # 绑定用户到无人机
+
+        # 部署无人机后添加负载初始化
+        for drone in self.drones:
+            drone.current_load = 0  # 确保所有无人机都有此属性
+
+        # 绑定用户时安全累加
         for user_id, drone_id in assignments.items():
-            self.users[user_id].assigned_drone = drone_id
-            self.drones[drone_id].current_load += self.users[user_id].task_rate
+            if hasattr(self.drones[drone_id], 'current_load'):  # 安全检查
+                self.drones[drone_id].current_load += self.users[user_id].task_rate
+            else:
+                self.drones[drone_id].current_load = self.users[user_id].task_rate
 
         self.completed_tasks = []
 
@@ -104,7 +111,7 @@ class DroneSchedulingEnv(gym.Env):
         self._generate_tasks()
 
         # 获取状态和奖励
-        next_state = self._get_state()
+        next_state = self._get_state
         reward = MetricsCalculator.calculate_reward(self)
         done = self.current_step >= self.config['max_steps']
 
@@ -163,15 +170,33 @@ class DroneSchedulingEnv(gym.Env):
     #         state.extend([queue_len, progress, urgency])
     #     return np.array(state)
 
-    # PPO:修改get_state()返回归一化状态
+    # # PPO:修改get_state()返回归一化状态
+    # def _get_state(self):
+    #     state = []
+    #     for drone in self.drones:
+    #         queue_ratio = len(drone.task_queue) / self.config['max_queue_length']
+    #         cpu_util = drone.current_task['compute_req'] / drone.current_task[
+    #             'initial_compute'] if drone.current_task else 0
+    #         state.extend([queue_ratio, cpu_util])
+    #     return np.array(state, dtype=np.float32)
     def _get_state(self):
         state = []
+        # 每个无人机固定贡献3个特征
         for drone in self.drones:
-            queue_ratio = len(drone.task_queue) / self.config['max_queue_length']
-            cpu_util = drone.current_task['compute_req'] / drone.current_task[
-                'initial_compute'] if drone.current_task else 0
-            state.extend([queue_ratio, cpu_util])
-        return np.array(state, dtype=np.float32)
+            state.extend([
+                len(drone.task_queue) / self.config['max_queue_length'],
+                drone.current_load / 100.0,
+                1 if drone.current_task else 0
+            ])
+        # 添加2个全局特征
+        state.extend([
+            len(self.completed_tasks) / 100,
+            self.current_step / self.config['max_steps']
+        ])
+        state = np.array(state, dtype=np.float32)
+        print(f"状态向量生成: 无人机数={len(self.drones)}, 总维度={len(state)}")  # 调试
+        return state
+
 
     def _get_metrics(self):
         """获取评估指标"""
@@ -187,4 +212,4 @@ class DroneSchedulingEnv(gym.Env):
         self.current_step = 0
         self.completed_tasks = []
         self._init_environment()
-        return self._get_state()
+        return self._get_state
