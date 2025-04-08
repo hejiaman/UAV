@@ -6,17 +6,20 @@ import torch
 import matplotlib.pyplot as plt
 from agent.PPO_d import PPO
 from enviroment.uav_env import DroneSchedulingEnv
+from utils import config
+import os
+os.environ['OMP_NUM_THREADS'] = '1'  # 修复KMeans内存泄漏
 
 
 config = {
     'num_drones': 3,
     'user_positions': [[10,20], [30,40], [50,60], [70,80]],  # 用户坐标
-    'coverage_radius': 50,
+    'coverage_radius': 500,
     'compute_power': 10,  # MIPS/step
     'bandwidth': 5,       # MB/step
     'transmit_power': 0.5,
     'max_queue_length': 5,
-    'task_rate': 0.1,
+    'task_rate': 0.5,
     'max_steps': 100,
     'reward_weights': [0.4, 0.4, 0.2],  # 时延,能耗,负载
     'task_complete_bonus': 5,

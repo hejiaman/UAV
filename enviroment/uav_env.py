@@ -1,10 +1,16 @@
 import gym
 import numpy as np
+
+
 from enviroment.domain.user import User
 from enviroment.domain.uav import Drone
 from enviroment.domain.Kmeans import DroneCluster
 # from enviroment.domain.Louvain import DroneCluster
 from utils.metrics import MetricsCalculator
+
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+
 
 
 class DroneSchedulingEnv(gym.Env):
@@ -13,7 +19,7 @@ class DroneSchedulingEnv(gym.Env):
         self.config = config
         self.current_step = 0
         self._init_environment()
-
+        self.coverage_radius = 50  # 根据你想要的覆盖半径来设定，单位跟位置保持一致
 
         # 动作空间：每个无人机对当前任务的选择
         # 0:本地执行, 1~N:转发给对应无人机
@@ -93,14 +99,31 @@ class DroneSchedulingEnv(gym.Env):
         # 2. 执行调度决策
         self._execute_actions(actions)
 
+        # 打印动作执行后的状态
+        print(f"\n[Step {self.current_step}] After executing actions:")
+        for drone in self.drones:
+            status = drone.current_task['status'] if drone.current_task else "None"
+            print(f"Drone {drone.id}: current_task={status}, queue_len={len(drone.task_queue)}")
+
+
         # 3. 生成新任务
         self._generate_tasks()
+
+        # 打印任务生成情况
+        print(f"\n[Step {self.current_step}] After generating tasks:")
+        for user in self.users:
+            assigned = user.assigned_drone
+            print(
+                f"User {user.id}: assigned to Drone {assigned}, task queue = {len(self.drones[assigned].task_queue) if assigned is not None else 'N/A'}")
 
         # 获取状态和奖励
         next_state = self._get_state()
         reward = MetricsCalculator.calculate_reward(self)
-        print("reward:", reward)
         done = self.current_step >= self.config['max_steps']
+
+        print(f"[Step {self.current_step}] Completed Tasks This Step: {len(self.completed_tasks)}")
+        for t in self.completed_tasks:
+            print(f"Task {t.user_id} finished at {t.complete_time}, delay: {t.complete_time - t.create_time}")
 
         return next_state, reward, done, self._get_metrics()
 
@@ -110,28 +133,48 @@ class DroneSchedulingEnv(gym.Env):
             if drone_id >= len(self.drones):
                 print(f"Error: Drone ID {drone_id} is out of range. Total drones: {len(self.drones)}")
                 continue  # 跳过错误的动作
+
             drone = self.drones[drone_id]
 
-            # 只对新到达的pending任务做决策
+            # 只对新到达的 pending 任务做决策
             if drone.current_task and drone.current_task['status'] == 'pending':
                 if action == 0:  # 本地执行
                     drone.current_task['status'] = 'computing'
                 else:  # 转发
                     target_id = action - 1
-                    if target_id < len(self.drones):
-                        self._forward_task(drone, self.drones[target_id])
+                    if 0 <= target_id < len(self.drones) and target_id != drone_id:
+                        target_drone = self.drones[target_id]
+                        drone.forward_task(target_drone, drone.current_task)
+                    else:
+                        print(f"Invalid forwarding target: {target_id}, fallback to local execution.")
+                        drone.current_task['status'] = 'computing'
 
     def _generate_tasks(self):
         """用户生成新任务"""
         for user in self.users:
+            # 先重置当前的关联（可选）
+            user.assigned_drone = None
+
+            # 检查有哪些无人机覆盖了该用户
+            print(f"[Check Coverage] User {user.id} at {user.position}")
+            for drone in self.drones:
+                dist = np.linalg.norm(np.array(user.position) - np.array(drone.position))
+                in_range = dist <= self.coverage_radius
+                print(f"    ↳ Drone {drone.id} at {drone.position}, dist = {dist:.2f}, in range: {in_range}")
+                if in_range:
+                    # 将用户分配给第一个在覆盖范围内的无人机
+                    user.assigned_drone = drone.id
+                    print(f"→ User {user.id} assigned to Drone {drone.id}")
+                    break  # 如果你只想分配给一个无人机，就break；否则可以用策略选一个最优的
+
+            # 生成任务并添加进队列
             task = user.generate_task(self.current_step)
             if task and user.assigned_drone is not None:
                 self.drones[user.assigned_drone].task_queue.append(task)
-
+                print(f"+++ Task from User {user.id} added to Drone {user.assigned_drone}'s queue")
 
     def _get_state(self):
-        state = []
-        # 每个无人机固定贡献3个特征
+        state = []   # 每个无人机固定贡献3个特征
         for drone in self.drones:
             state.extend([
                 len(drone.task_queue) / self.config['max_queue_length'],

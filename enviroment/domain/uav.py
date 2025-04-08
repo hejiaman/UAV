@@ -22,6 +22,7 @@ class Drone:
         self.energy_consumed = 0  # 累计能耗
         self.current_load = 0  # 新增负载属性
 
+
     def add_task(self, task):
         """添加任务到队列"""
         if len(self.task_queue) < self.max_queue_length:
@@ -48,6 +49,7 @@ class Drone:
                 if self.current_task['compute_req'] <= 0:
                     self.current_task['status'] = 'completed'
                     return True
+
         return False
 
     def forward_task(self, target_drone, task):
